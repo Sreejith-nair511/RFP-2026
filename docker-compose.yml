@@ -1,0 +1,130 @@
+version: "3.9"
+
+# DeceptiScope v2 — Docker Compose
+# Designed for A100 cluster deployment (GPU passthrough via deploy.resources)
+# Local dev: docker compose up --build
+
+services:
+
+  # ── Backend API ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deceptiscope-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://deceptiscope:deceptiscope@postgres:5432/deceptiscope
+      - SHADOW_MODEL_PATH=/models/shadow
+      - HF_HOME=/models/hf_cache
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - model_cache:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    # GPU passthrough for shadow model training (comment out for CPU-only dev)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Frontend ─────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deceptiscope-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Redis (WebSocket streaming state) ────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: deceptiscope-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── PostgreSQL (experiment tracking) ─────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: deceptiscope-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: deceptiscope
+      POSTGRES_PASSWORD: deceptiscope
+      POSTGRES_DB: deceptiscope
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deceptiscope"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Jupyter (research notebooks) ─────────────────────────────────────────
+  jupyter:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deceptiscope-jupyter
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+             --NotebookApp.token=deceptiscope
+    ports:
+      - "8888:8888"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./backend:/app
+      - ./notebooks:/notebooks
+      - model_cache:/models
+    depends_on:
+      - redis
+      - postgres
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+  model_cache:
