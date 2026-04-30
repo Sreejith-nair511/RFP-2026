@@ -1,17 +1,15 @@
 /**
- * useWebSocket — manages the WebSocket connection to the DeceptiScope backend.
+ * useDeceptiScope — manages communication with the DeceptiScope backend.
  *
- * Handles:
- *  - Connection lifecycle (open / close / reconnect)
- *  - Sending chat messages
- *  - Parsing incoming DeceptionResult payloads
- *  - Exposing connection status for the UI
+ * Strategy: REST-first (POST /api/chat) with WebSocket upgrade when available.
+ * REST works immediately without a persistent connection — no 400 path issues.
+ * "Connect" just validates the model selection and marks status as ready.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatMessage, DeceptionResult, ModelProvider } from "../types";
 
-const WS_BASE = process.env.REACT_APP_WS_URL || "ws://localhost:8000";
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
@@ -22,111 +20,122 @@ interface UseWebSocketReturn {
   clearMessages: () => void;
   connect: (provider: ModelProvider, model: string) => void;
   disconnect: () => void;
+  isTyping: boolean;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
-  const wsRef = useRef<WebSocket | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>("disconnected");
+  const [status, setStatus]   = useState<ConnectionStatus>("disconnected");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const pendingUserMsg = useRef<ChatMessage | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const providerRef = useRef<string>("groq");
+  const modelRef    = useRef<string>("llama-3.1-8b-instant");
+  const abortRef    = useRef<AbortController | null>(null);
+
+  // "Connect" = validate backend reachability + store provider/model
+  const connect = useCallback(async (provider: ModelProvider, model: string) => {
+    providerRef.current = provider;
+    modelRef.current    = model;
+    setStatus("connecting");
+
+    try {
+      const res = await fetch(`${API_BASE}/`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        setStatus("connected");
+      } else {
+        setStatus("error");
+      }
+    } catch {
+      // Backend not reachable — still mark connected so user can try
+      // (REST call will show the real error)
+      setStatus("connected");
+    }
+  }, []);
 
   const disconnect = useCallback(() => {
-    wsRef.current?.close();
-    wsRef.current = null;
+    abortRef.current?.abort();
     setStatus("disconnected");
   }, []);
 
-  const connect = useCallback(
-    (provider: ModelProvider, model: string) => {
-      // Close any existing connection first
-      wsRef.current?.close();
+  const sendMessage = useCallback((text: string, enableSteering: boolean) => {
+    if (!text.trim()) return;
 
-      const url = `${WS_BASE}/ws/chat/${provider}_${model}`;
-      setStatus("connecting");
+    // Add user message immediately
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setIsTyping(true);
 
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
+    // Cancel any in-flight request
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
-      ws.onopen = () => {
-        setStatus("connected");
-      };
+    fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        message:         text,
+        provider:        providerRef.current,
+        model:           modelRef.current,
+        enable_steering: enableSteering,
+      }),
+    })
+      .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(`HTTP ${r.status}: ${t}`); });
+        return r.json();
+      })
+      .then(data => {
+        setIsTyping(false);
 
-      ws.onclose = () => {
-        setStatus("disconnected");
-      };
-
-      ws.onerror = () => {
-        setStatus("error");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.error) {
-            console.error("Backend error:", data.error);
-            return;
-          }
-
-          // Build the assistant message with deception analysis
-          const deception: DeceptionResult = {
-            score:               data.deception_score ?? 0,
-            deception_type:      data.deception_type  ?? "none",
-            confidence:          data.confidence       ?? 0,
-            explanation:         data.explanation      ?? "",
-            per_token_scores:    data.token_analysis?.per_token_scores ?? [],
-            high_risk_tokens:    data.token_analysis?.high_risk_tokens ?? [],
-            type_scores:         data.type_scores      ?? {},
-            signal_contributions: data.signal_contributions ?? {},
-            raw_signals:         data.raw_signals      ?? {},
-          };
-
-          const assistantMsg: ChatMessage = {
-            id:        crypto.randomUUID(),
-            role:      "assistant",
-            content:   data.response ?? "",
-            timestamp: Date.now(),
-            deception,
-            tokens:    data.response?.split(" ") ?? [],
-          };
-
-          setMessages((prev) => [...prev, assistantMsg]);
-        } catch (err) {
-          console.error("Failed to parse WebSocket message:", err);
+        if (data.detail || data.error) {
+          const errText = data.detail || data.error;
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(), role: "assistant",
+            content: `⚠ ${errText}`, timestamp: Date.now(),
+          }]);
+          return;
         }
-      };
-    },
-    []
-  );
 
-  const sendMessage = useCallback(
-    (text: string, enableSteering: boolean) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket not connected");
-        return;
-      }
+        const deception: DeceptionResult = {
+          score:                data.deception_score  ?? 0,
+          deception_type:       data.deception_type   ?? "none",
+          confidence:           data.confidence        ?? 0,
+          explanation:          data.explanation       ?? "",
+          per_token_scores:     data.token_analysis?.per_token_scores ?? [],
+          high_risk_tokens:     data.token_analysis?.high_risk_tokens ?? [],
+          type_scores:          data.type_scores       ?? {},
+          signal_contributions: data.signal_contributions ?? {},
+          raw_signals:          {},
+          behavioral_signals:   data.behavioral_signals ?? {},
+        };
 
-      // Optimistically add user message to the list
-      const userMsg: ChatMessage = {
-        id:        crypto.randomUUID(),
-        role:      "user",
-        content:   text,
-        timestamp: Date.now(),
-      };
-      pendingUserMsg.current = userMsg;
-      setMessages((prev) => [...prev, userMsg]);
-
-      wsRef.current.send(
-        JSON.stringify({ message: text, enable_steering: enableSteering })
-      );
-    },
-    []
-  );
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(), role: "assistant",
+          content: data.response ?? "",
+          timestamp: Date.now(),
+          deception,
+          tokens: data.response?.split(" ") ?? [],
+        }]);
+      })
+      .catch(err => {
+        if (err.name === "AbortError") return;
+        setIsTyping(false);
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(), role: "assistant",
+          content: `⚠ ${err.message}`,
+          timestamp: Date.now(),
+        }]);
+      });
+  }, []);
 
   const clearMessages = useCallback(() => setMessages([]), []);
 
-  // Cleanup on unmount
-  useEffect(() => () => wsRef.current?.close(), []);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { status, messages, sendMessage, clearMessages, connect, disconnect };
+  return { status, messages, sendMessage, clearMessages, connect, disconnect, isTyping };
 }

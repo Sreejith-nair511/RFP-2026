@@ -1,40 +1,21 @@
-/**
- * Shared TypeScript types for DeceptiScope v2 dashboard.
- * Mirrors the Python dataclasses returned by the backend WebSocket.
- */
-
 export type DeceptionType =
-  | "factual_error"
-  | "omission"
-  | "overconfidence"
-  | "sycophancy"
-  | "evasion"
-  | "contradiction"
-  | "false_expertise"
-  | "none";
+  | "factual_error" | "omission" | "overconfidence"
+  | "sycophancy" | "evasion" | "contradiction"
+  | "false_expertise" | "none";
 
-export interface TokenRisk {
-  index: number;
-  token: string;
-  risk_score: number;
-}
+export interface TokenRisk { index: number; token: string; risk_score: number; }
 
 export interface DeceptionResult {
-  score: number;                          // 0–1 calibrated probability
+  score: number;
   deception_type: DeceptionType;
-  confidence: number;                     // epistemic confidence in score
+  confidence: number;
   explanation: string;
   per_token_scores: number[];
   high_risk_tokens: TokenRisk[];
-  type_scores: Record<DeceptionType, number>;
+  type_scores: Record<string, number>;
   signal_contributions: Record<string, number>;
   raw_signals: Record<string, unknown>;
-}
-
-export interface BehavioralSignals {
-  entropy?: number;
-  consistency?: number;
-  cot_contradiction?: number;
+  behavioral_signals?: { entropy?: number; consistency?: number; cot_contradiction?: number };
 }
 
 export interface ChatMessage {
@@ -46,7 +27,7 @@ export interface ChatMessage {
   tokens?: string[];
 }
 
-export type ModelProvider = "openai" | "anthropic" | "gemini";
+export type ModelProvider = "openai" | "anthropic" | "gemini" | "groq";
 
 export interface ModelOption {
   provider: ModelProvider;
@@ -54,28 +35,41 @@ export interface ModelOption {
   label: string;
   supportsLogprobs: boolean;
   supportsCoT: boolean;
+  speed: "fast" | "medium" | "slow";
+  tokensPerSec: string;
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
-  { provider: "openai",    model: "gpt-4o",            label: "GPT-4o",            supportsLogprobs: true,  supportsCoT: false },
-  { provider: "openai",    model: "gpt-5-preview",     label: "GPT-5 Preview",     supportsLogprobs: true,  supportsCoT: true  },
-  { provider: "anthropic", model: "claude-opus-4-6",   label: "Claude Opus 4.6",   supportsLogprobs: false, supportsCoT: true  },
-  { provider: "anthropic", model: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", supportsLogprobs: false, supportsCoT: true  },
-  { provider: "gemini",    model: "gemini-2.5-pro",    label: "Gemini 2.5 Pro",    supportsLogprobs: false, supportsCoT: false },
+  { provider: "groq",     model: "llama-3.3-70b-versatile",                label: "LLaMA 3.3 70B",    supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "280" },
+  { provider: "groq",     model: "llama-3.1-8b-instant",                   label: "LLaMA 3.1 8B",     supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "560" },
+  { provider: "groq",     model: "meta-llama/llama-4-scout-17b-16e-instruct", label: "LLaMA 4 Scout", supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "750" },
+  { provider: "groq",     model: "qwen/qwen3-32b",                         label: "Qwen3 32B",        supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "400" },
+  { provider: "groq",     model: "openai/gpt-oss-20b",                     label: "GPT OSS 20B",      supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "1000" },
+  { provider: "gemini",   model: "gemini-2.5-flash",                       label: "Gemini 2.5 Flash", supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "—" },
+  { provider: "gemini",   model: "gemini-2.5-pro",                         label: "Gemini 2.5 Pro",   supportsLogprobs: false, supportsCoT: false, speed: "medium", tokensPerSec: "—" },
+  { provider: "openai",   model: "gpt-4o",                                 label: "GPT-4o",           supportsLogprobs: true,  supportsCoT: false, speed: "medium", tokensPerSec: "—" },
+  { provider: "anthropic",model: "claude-3-sonnet-4.6",                    label: "Claude Sonnet 4.6",supportsLogprobs: false, supportsCoT: true,  speed: "medium", tokensPerSec: "—" },
 ];
 
-export const DECEPTION_TYPE_COLORS: Record<DeceptionType, string> = {
-  factual_error:   "#f85149",
-  omission:        "#d29922",
-  overconfidence:  "#ff7b72",
-  sycophancy:      "#bc8cff",
-  evasion:         "#79c0ff",
-  contradiction:   "#ffa657",
-  false_expertise: "#f0883e",
-  none:            "#3fb950",
+export const PROVIDER_META: Record<ModelProvider, { label: string; color: string; dim: string }> = {
+  groq:      { label: "Groq",      color: "#f97316", dim: "rgba(249,115,22,0.12)" },
+  gemini:    { label: "Gemini",    color: "#3b82f6", dim: "rgba(59,130,246,0.12)" },
+  openai:    { label: "OpenAI",    color: "#22c55e", dim: "rgba(34,197,94,0.12)"  },
+  anthropic: { label: "Anthropic", color: "#a855f7", dim: "rgba(168,85,247,0.12)" },
 };
 
-export const DECEPTION_TYPE_LABELS: Record<DeceptionType, string> = {
+export const TYPE_COLOR: Record<string, string> = {
+  factual_error:   "#ef4444",
+  omission:        "#eab308",
+  overconfidence:  "#f97316",
+  sycophancy:      "#a855f7",
+  evasion:         "#3b82f6",
+  contradiction:   "#f59e0b",
+  false_expertise: "#ec4899",
+  none:            "#22c55e",
+};
+
+export const TYPE_LABEL: Record<string, string> = {
   factual_error:   "Factual Error",
   omission:        "Omission",
   overconfidence:  "Overconfidence",
@@ -85,3 +79,29 @@ export const DECEPTION_TYPE_LABELS: Record<DeceptionType, string> = {
   false_expertise: "False Expertise",
   none:            "Honest",
 };
+
+// Short single-char sigils — no emoji
+export const TYPE_SIGIL: Record<string, string> = {
+  factual_error:   "F",
+  omission:        "O",
+  overconfidence:  "C",
+  sycophancy:      "S",
+  evasion:         "E",
+  contradiction:   "X",
+  false_expertise: "K",
+  none:            "H",
+};
+
+export function scoreToColor(s: number): string {
+  if (s < 0.25) return "#22c55e";
+  if (s < 0.5)  return "#eab308";
+  if (s < 0.75) return "#f97316";
+  return "#ef4444";
+}
+
+export function scoreToLabel(s: number): string {
+  if (s < 0.25) return "Honest";
+  if (s < 0.5)  return "Moderate";
+  if (s < 0.75) return "High Risk";
+  return "Deceptive";
+}

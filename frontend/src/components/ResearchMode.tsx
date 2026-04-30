@@ -1,181 +1,177 @@
-/**
- * ResearchMode — raw signal inspector for interpretability researchers.
- *
- * Shows:
- *  - Raw logits / logprob distribution (bar chart)
- *  - Probe weights per layer
- *  - Signal contribution breakdown (pie / bar)
- *  - Full JSON dump of DeceptionResult
- *
- * This panel is what grant reviewers will want to see — it demonstrates
- * that DeceptiScope exposes interpretable internals, not just a black-box score.
- */
-
 import React, { useState } from "react";
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Cell,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer,
+  PieChart, Pie, Legend,
 } from "recharts";
-import { DeceptionResult, DECEPTION_TYPE_COLORS, DECEPTION_TYPE_LABELS } from "../types";
+import { DeceptionResult, TYPE_COLOR, TYPE_LABEL } from "../types";
 
-interface Props {
-  result: DeceptionResult | null;
-}
+interface Props { result: DeceptionResult | null; }
+type Tab = "signals" | "types" | "json";
 
-type Tab = "signals" | "type_breakdown" | "raw_json";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "signals", label: "Signals" },
+  { id: "types",   label: "Types"   },
+  { id: "json",    label: "Raw"     },
+];
 
 export const ResearchMode: React.FC<Props> = ({ result }) => {
   const [tab, setTab] = useState<Tab>("signals");
 
-  if (!result) {
-    return (
-      <div className="bg-ds-surface border border-ds-border rounded-xl p-4">
-        <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider mb-3">
-          Research Mode
-        </h2>
-        <p className="text-ds-muted text-xs text-center py-8">
-          Send a message to see raw signal data.
-        </p>
-      </div>
-    );
-  }
-
-  // Signal contributions bar data
-  const signalData = Object.entries(result.signal_contributions)
-    .filter(([, v]) => v > 0)
-    .map(([k, v]) => ({ name: k.replace("_", " "), value: v }));
-
-  // Type breakdown pie data
-  const typeData = Object.entries(result.type_scores)
-    .filter(([, v]) => v > 0.01)
-    .map(([k, v]) => ({
-      name: DECEPTION_TYPE_LABELS[k as keyof typeof DECEPTION_TYPE_LABELS] ?? k,
-      value: parseFloat((v * 100).toFixed(1)),
-      color: DECEPTION_TYPE_COLORS[k as keyof typeof DECEPTION_TYPE_COLORS] ?? "#8b949e",
-    }));
-
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "signals",        label: "Signal Streams" },
-    { id: "type_breakdown", label: "Type Breakdown" },
-    { id: "raw_json",       label: "Raw JSON" },
-  ];
-
   return (
-    <div className="bg-ds-surface border border-ds-border rounded-xl p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider">
-        Research Mode
-      </h2>
-
-      {/* Tab bar */}
-      <div className="flex gap-1 bg-ds-bg rounded-lg p-1">
-        {tabs.map((t) => (
+    <div className="bg-surface border border-border rounded-lg overflow-hidden">
+      {/* Header + tabs */}
+      <div className="flex items-center border-b border-border">
+        <span className="text-2xs font-semibold text-ink2 uppercase tracking-widest px-3 py-2.5 border-r border-border">
+          Research
+        </span>
+        {TABS.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 text-xs py-1.5 rounded-md transition-colors ${
-              tab === t.id
-                ? "bg-ds-surface text-ds-text font-semibold"
-                : "text-ds-muted hover:text-ds-text"
-            }`}
+            className={`px-3 py-2.5 text-2xs font-medium transition-colors relative
+              ${tab === t.id ? "text-ink" : "text-ink3 hover:text-ink2"}`}
           >
             {t.label}
+            {tab === t.id && (
+              <div className="absolute bottom-0 left-0 right-0 h-px bg-accent" />
+            )}
           </button>
         ))}
       </div>
 
-      {/* Signal streams */}
-      {tab === "signals" && (
-        <div className="space-y-3">
-          <ResponsiveContainer width="100%" height={140}>
-            <BarChart data={signalData} layout="vertical" margin={{ left: 60, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#30363d" horizontal={false} />
-              <XAxis
-                type="number"
-                domain={[0, 1]}
-                tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
-                tick={{ fill: "#8b949e", fontSize: 10 }}
-              />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tick={{ fill: "#8b949e", fontSize: 10 }}
-                width={60}
-              />
-              <Tooltip
-                formatter={(v) => v != null ? [`${(Number(v) * 100).toFixed(1)}%`, "Weight"] : ["-", "Weight"]}
-                contentStyle={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8 }}
-                labelStyle={{ color: "#e6edf3" }}
-              />
-              <Bar dataKey="value" radius={[0, 3, 3, 0]}>
-                {signalData.map((_, i) => (
-                  <Cell key={i} fill="#58a6ff" />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+      <div className="p-3">
+        {!result ? (
+          <p className="text-2xs text-ink3 text-center py-8">
+            Send a message to see signal data.
+          </p>
+        ) : (
+          <>
+            {/* ── Signals ── */}
+            {tab === "signals" && (
+              <div className="space-y-3">
+                {/* Metric cards */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { label: "Score",  value: `${(result.score * 100).toFixed(1)}%`,      color: "text-danger"  },
+                    { label: "Conf",   value: `${(result.confidence * 100).toFixed(0)}%`, color: "text-accent"  },
+                    { label: "Streams",value: Object.values(result.signal_contributions).filter(v => v > 0.01).length.toString(), color: "text-violet" },
+                  ].map(m => (
+                    <div key={m.label} className="bg-bg border border-border rounded-md p-2 text-center">
+                      <p className="text-2xs text-ink3 mb-0.5">{m.label}</p>
+                      <p className={`text-sm font-mono font-bold ${m.color}`}>{m.value}</p>
+                    </div>
+                  ))}
+                </div>
 
-          {/* Key metrics */}
-          <div className="grid grid-cols-3 gap-2 text-center">
-            {[
-              { label: "Score",      value: `${(result.score * 100).toFixed(1)}%`,      color: "text-ds-red"    },
-              { label: "Confidence", value: `${(result.confidence * 100).toFixed(1)}%`, color: "text-ds-accent" },
-              { label: "Type",       value: result.deception_type.replace("_", " "),    color: "text-ds-purple" },
-            ].map((m) => (
-              <div key={m.label} className="bg-ds-bg border border-ds-border rounded-lg p-2">
-                <p className="text-xs text-ds-muted">{m.label}</p>
-                <p className={`text-sm font-mono font-bold ${m.color} capitalize`}>{m.value}</p>
+                {/* Signal contributions */}
+                {Object.keys(result.signal_contributions).length > 0 && (
+                  <div>
+                    <p className="text-2xs text-ink3 mb-1.5 uppercase tracking-wider">Signal Streams</p>
+                    <ResponsiveContainer width="100%" height={90}>
+                      <BarChart
+                        data={Object.entries(result.signal_contributions)
+                          .filter(([, v]) => v > 0)
+                          .map(([k, v]) => ({ name: k.replace(/_/g, " "), value: v }))}
+                        layout="vertical"
+                        margin={{ left: 64, right: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="2 4" stroke="#1e2730" horizontal={false} />
+                        <XAxis
+                          type="number" domain={[0, 1]}
+                          tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+                          tick={{ fill: "#4a5568", fontSize: 8 }}
+                        />
+                        <YAxis
+                          type="category" dataKey="name"
+                          tick={{ fill: "#4a5568", fontSize: 8 }}
+                          width={64}
+                        />
+                        <Tooltip
+                          formatter={(v) => v != null ? [`${(Number(v) * 100).toFixed(1)}%`, "Weight"] : ["-", "Weight"]}
+                          contentStyle={{ background: "#080c10", border: "1px solid #1e2730", borderRadius: 6, fontSize: 10 }}
+                        />
+                        <Bar dataKey="value" radius={[0, 2, 2, 0]}>
+                          {Object.entries(result.signal_contributions)
+                            .filter(([, v]) => v > 0)
+                            .map((_, i) => <Cell key={i} fill="#3b82f6" />)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Behavioral signals */}
+                {result.behavioral_signals && (
+                  <div>
+                    <p className="text-2xs text-ink3 mb-1.5 uppercase tracking-wider">Behavioral Signals</p>
+                    <div className="space-y-1.5">
+                      {Object.entries(result.behavioral_signals)
+                        .filter(([, v]) => v != null)
+                        .map(([k, v]) => (
+                          <div key={k} className="flex items-center gap-2">
+                            <span className="text-2xs text-ink3 w-24 truncate">{k.replace(/_/g, " ")}</span>
+                            <div className="flex-1 h-0.5 bg-border2 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-accent rounded-full"
+                                style={{ width: `${(v as number) * 100}%` }}
+                              />
+                            </div>
+                            <span className="text-2xs font-mono text-ink3 w-7 text-right">
+                              {((v as number) * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {/* Type breakdown */}
-      {tab === "type_breakdown" && (
-        <ResponsiveContainer width="100%" height={220}>
-          <PieChart>
-            <Pie
-              data={typeData}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="45%"
-              outerRadius={70}
-              label={({ name, value }) => `${name}: ${value}%`}
-              labelLine={false}
-            >
-              {typeData.map((entry, i) => (
-                <Cell key={i} fill={entry.color} />
-              ))}
-            </Pie>
-            <Legend
-              iconSize={8}
-              formatter={(v) => <span style={{ color: "#8b949e", fontSize: 11 }}>{v}</span>}
-            />
-            <Tooltip
-              formatter={(v) => v != null ? [`${v}%`] : ["-"]}
-              contentStyle={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8 }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      )}
+            {/* ── Types ── */}
+            {tab === "types" && (
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={Object.entries(result.type_scores)
+                      .filter(([, v]) => v > 0.01)
+                      .map(([k, v]) => ({
+                        name:  TYPE_LABEL[k] ?? k,
+                        value: parseFloat((v * 100).toFixed(1)),
+                        color: TYPE_COLOR[k] ?? "#7a8899",
+                      }))}
+                    dataKey="value" nameKey="name"
+                    cx="50%" cy="42%" outerRadius={60}
+                    label={({ value }) => `${value}%`}
+                    labelLine={false}
+                  >
+                    {Object.entries(result.type_scores)
+                      .filter(([, v]) => v > 0.01)
+                      .map(([k], i) => (
+                        <Cell key={i} fill={TYPE_COLOR[k] ?? "#7a8899"} />
+                      ))}
+                  </Pie>
+                  <Legend
+                    iconSize={6}
+                    formatter={v => <span style={{ color: "#7a8899", fontSize: 9 }}>{v}</span>}
+                  />
+                  <Tooltip
+                    formatter={(v) => v != null ? [`${v}%`] : ["-"]}
+                    contentStyle={{ background: "#080c10", border: "1px solid #1e2730", borderRadius: 6, fontSize: 10 }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
 
-      {/* Raw JSON */}
-      {tab === "raw_json" && (
-        <pre className="bg-ds-bg border border-ds-border rounded-lg p-3 text-xs text-ds-text
-                        font-mono overflow-auto max-h-64 leading-relaxed">
-          {JSON.stringify(result, null, 2)}
-        </pre>
-      )}
+            {/* ── Raw JSON ── */}
+            {tab === "json" && (
+              <pre className="bg-bg border border-border rounded-md p-2.5 text-2xs text-ink2
+                              font-mono overflow-auto max-h-64 leading-relaxed">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

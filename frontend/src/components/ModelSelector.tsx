@@ -1,119 +1,162 @@
-/**
- * ModelSelector — lets the user pick a frontier model and connect.
- *
- * Shows provider badges, capability tags (logprobs / CoT), and
- * connection status indicator.
- */
-
-import React from "react";
-import { motion } from "framer-motion";
-import { MODEL_OPTIONS, ModelOption, ModelProvider } from "../types";
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { MODEL_OPTIONS, ModelOption, ModelProvider, PROVIDER_META } from "../types";
 import { ConnectionStatus } from "../hooks/useWebSocket";
 
 interface Props {
   selectedModel: ModelOption | null;
   status: ConnectionStatus;
-  onSelect: (option: ModelOption) => void;
+  onSelect: (o: ModelOption) => void;
   onConnect: () => void;
   onDisconnect: () => void;
 }
 
-const PROVIDER_COLORS: Record<ModelProvider, string> = {
-  openai:    "bg-green-900 text-green-300 border-green-700",
-  anthropic: "bg-orange-900 text-orange-300 border-orange-700",
-  gemini:    "bg-blue-900  text-blue-300  border-blue-700",
-};
+const PROVIDERS: ModelProvider[] = ["groq", "gemini", "openai", "anthropic"];
 
 const STATUS_DOT: Record<ConnectionStatus, string> = {
-  connected:    "bg-ds-green",
-  connecting:   "bg-ds-yellow animate-pulse",
-  disconnected: "bg-ds-muted",
-  error:        "bg-ds-red",
+  connected:    "bg-success",
+  connecting:   "bg-warn animate-pulse",
+  disconnected: "bg-ink3",
+  error:        "bg-danger",
+};
+
+const STATUS_TEXT: Record<ConnectionStatus, string> = {
+  connected:    "Connected",
+  connecting:   "Connecting",
+  disconnected: "Offline",
+  error:        "Error",
 };
 
 export const ModelSelector: React.FC<Props> = ({
-  selectedModel,
-  status,
-  onSelect,
-  onConnect,
-  onDisconnect,
+  selectedModel, status, onSelect, onConnect, onDisconnect,
 }) => {
+  const [activeProvider, setActiveProvider] = useState<ModelProvider>("groq");
+  const filtered = MODEL_OPTIONS.filter(m => m.provider === activeProvider);
+  const meta = PROVIDER_META[activeProvider];
+
   return (
-    <div className="bg-ds-surface border border-ds-border rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider">
-          Model
-        </h2>
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${STATUS_DOT[status]}`} />
-          <span className="text-xs text-ds-muted capitalize">{status}</span>
+    <div className="flex flex-col bg-surface border border-border rounded-lg overflow-hidden">
+
+      {/* Header row */}
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+        <span className="text-2xs font-semibold text-ink2 uppercase tracking-widest">Model</span>
+        <div className="flex items-center gap-1.5">
+          <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[status]}`} />
+          <span className="text-2xs text-ink3">{STATUS_TEXT[status]}</span>
         </div>
       </div>
 
-      {/* Model grid */}
-      <div className="grid grid-cols-1 gap-2">
-        {MODEL_OPTIONS.map((opt) => {
-          const isSelected = selectedModel?.model === opt.model;
+      {/* Provider tabs */}
+      <div className="flex border-b border-border">
+        {PROVIDERS.map(p => {
+          const m = PROVIDER_META[p];
+          const active = activeProvider === p;
+          const has = MODEL_OPTIONS.some(o => o.provider === p);
           return (
-            <motion.button
-              key={opt.model}
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={() => onSelect(opt)}
-              className={`
-                flex items-center justify-between px-3 py-2 rounded-lg border text-left
-                transition-colors text-sm
-                ${isSelected
-                  ? "border-ds-accent bg-blue-950 text-ds-text"
-                  : "border-ds-border bg-ds-bg text-ds-muted hover:border-ds-accent hover:text-ds-text"
-                }
+            <button
+              key={p}
+              onClick={() => setActiveProvider(p)}
+              disabled={!has}
+              className={`flex-1 py-2 text-2xs font-medium transition-colors relative
+                ${active ? "text-ink" : "text-ink3 hover:text-ink2"}
+                ${!has ? "opacity-30 cursor-not-allowed" : "cursor-pointer"}
               `}
             >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-xs px-1.5 py-0.5 rounded border font-mono ${PROVIDER_COLORS[opt.provider]}`}
-                >
-                  {opt.provider}
-                </span>
-                <span className="font-medium">{opt.label}</span>
-              </div>
-              <div className="flex gap-1">
-                {opt.supportsLogprobs && (
-                  <span className="text-xs bg-ds-surface border border-ds-border px-1.5 py-0.5 rounded text-ds-muted">
-                    logprobs
-                  </span>
-                )}
-                {opt.supportsCoT && (
-                  <span className="text-xs bg-ds-surface border border-ds-border px-1.5 py-0.5 rounded text-ds-muted">
-                    CoT
-                  </span>
-                )}
-              </div>
-            </motion.button>
+              {m.label}
+              {active && (
+                <motion.div
+                  layoutId="providerUnderline"
+                  className="absolute bottom-0 left-0 right-0 h-px"
+                  style={{ background: m.color }}
+                />
+              )}
+            </button>
           );
         })}
       </div>
 
-      {/* Connect / Disconnect */}
-      <div className="flex gap-2 pt-1">
-        <motion.button
-          whileTap={{ scale: 0.97 }}
+      {/* Model list */}
+      <div className="overflow-y-auto" style={{ maxHeight: 220 }}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeProvider}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="p-1.5 space-y-0.5"
+          >
+            {filtered.map(opt => {
+              const sel = selectedModel?.model === opt.model;
+              return (
+                <button
+                  key={opt.model}
+                  onClick={() => onSelect(opt)}
+                  className={`w-full text-left px-2.5 py-2 rounded-md transition-all group
+                    ${sel
+                      ? "bg-surface2 border border-border2"
+                      : "hover:bg-surface2 border border-transparent"
+                    }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {/* Selection indicator */}
+                      <div
+                        className={`w-1 h-1 rounded-full flex-shrink-0 transition-all ${sel ? "opacity-100" : "opacity-0"}`}
+                        style={{ backgroundColor: meta.color }}
+                      />
+                      <span className={`text-sm font-medium truncate ${sel ? "text-ink" : "text-ink2 group-hover:text-ink"}`}>
+                        {opt.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {opt.tokensPerSec !== "—" && (
+                        <span className="text-2xs text-ink3 font-mono">{opt.tokensPerSec} t/s</span>
+                      )}
+                      <div className="flex gap-1">
+                        {opt.supportsLogprobs && (
+                          <span className="text-2xs px-1 py-px rounded bg-surface2 border border-border text-ink3 font-mono">lp</span>
+                        )}
+                        {opt.supportsCoT && (
+                          <span className="text-2xs px-1 py-px rounded bg-surface2 border border-border text-ink3 font-mono">cot</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      {/* Action row */}
+      <div className="p-2 border-t border-border flex gap-1.5">
+        <button
           onClick={onConnect}
           disabled={!selectedModel || status === "connecting"}
-          className="flex-1 py-2 rounded-lg bg-ds-accent text-ds-bg font-semibold text-sm
-                     disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-400 transition-colors"
+          className="flex-1 py-2 rounded-md text-xs font-semibold transition-all
+                     disabled:opacity-30 disabled:cursor-not-allowed"
+          style={selectedModel ? {
+            background: PROVIDER_META[selectedModel.provider].dim,
+            border: `1px solid ${PROVIDER_META[selectedModel.provider].color}33`,
+            color: PROVIDER_META[selectedModel.provider].color,
+          } : {
+            background: "transparent",
+            border: "1px solid #1e2730",
+            color: "#4a5568",
+          }}
         >
-          {status === "connecting" ? "Connecting…" : "Connect"}
-        </motion.button>
+          {status === "connecting" ? "Connecting…" : status === "connected" ? "Reconnect" : "Connect"}
+        </button>
         {status === "connected" && (
-          <motion.button
-            whileTap={{ scale: 0.97 }}
+          <button
             onClick={onDisconnect}
-            className="px-4 py-2 rounded-lg border border-ds-red text-ds-red text-sm
-                       hover:bg-red-950 transition-colors"
+            className="px-3 py-2 rounded-md border border-border text-xs text-ink3
+                       hover:border-danger/40 hover:text-danger transition-all"
           >
             Disconnect
-          </motion.button>
+          </button>
         )}
       </div>
     </div>

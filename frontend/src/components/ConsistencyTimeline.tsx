@@ -1,157 +1,102 @@
-/**
- * ConsistencyTimeline — line chart of deception score across conversation turns.
- *
- * Helps researchers spot drift: does the model become more deceptive as the
- * conversation progresses?  Each data point is one assistant message.
- */
-
 import React from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-} from "recharts";
-import { ChatMessage, DECEPTION_TYPE_COLORS } from "../types";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
+import { ChatMessage, TYPE_COLOR, scoreToColor } from "../types";
 
-interface Props {
-  messages: ChatMessage[];
-}
+interface Props { messages: ChatMessage[]; }
 
-interface DataPoint {
-  turn: number;
-  score: number;
-  type: string;
-  preview: string;
-}
-
-const CustomTooltip: React.FC<any> = ({ active, payload }) => {
+const Tip: React.FC<any> = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
-  const d: DataPoint = payload[0].payload;
+  const d = payload[0].payload;
   return (
-    <div className="bg-ds-bg border border-ds-border rounded-lg px-3 py-2 text-xs shadow-lg max-w-xs">
-      <p className="text-ds-muted mb-1">Turn {d.turn}</p>
-      <p className="text-ds-text font-mono font-bold">
-        Score: {(d.score * 100).toFixed(1)}%
+    <div className="bg-bg border border-border rounded-md px-2.5 py-2 text-2xs shadow-panel max-w-[180px]">
+      <p className="text-ink3 mb-0.5">Turn {d.turn}</p>
+      <p className="font-mono font-semibold" style={{ color: d.color }}>
+        {(d.score * 100).toFixed(1)}%
       </p>
-      <p className="text-ds-muted capitalize">{d.type.replace("_", " ")}</p>
-      <p className="text-ds-muted/70 mt-1 truncate">{d.preview}</p>
+      <p className="text-ink3 capitalize">{d.type.replace(/_/g, " ")}</p>
+      <p className="text-ink3 mt-1 truncate opacity-60">{d.preview}</p>
     </div>
   );
 };
 
 export const ConsistencyTimeline: React.FC<Props> = ({ messages }) => {
-  const assistantMessages = messages.filter(
-    (m) => m.role === "assistant" && m.deception
-  );
-
-  const data: DataPoint[] = assistantMessages.map((m, i) => ({
+  const rows = messages.filter(m => m.role === "assistant" && m.deception);
+  const data = rows.map((m, i) => ({
     turn:    i + 1,
     score:   m.deception!.score,
     type:    m.deception!.deception_type,
-    preview: m.content.slice(0, 60) + (m.content.length > 60 ? "…" : ""),
+    color:   TYPE_COLOR[m.deception!.deception_type] ?? "#7a8899",
+    preview: m.content.slice(0, 48) + (m.content.length > 48 ? "…" : ""),
   }));
 
-  if (data.length === 0) {
-    return (
-      <div className="bg-ds-surface border border-ds-border rounded-xl p-4">
-        <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider mb-3">
-          Consistency Timeline
-        </h2>
-        <p className="text-ds-muted text-xs text-center py-8">
-          No assistant messages yet.
-        </p>
-      </div>
-    );
-  }
-
-  // Colour each dot by deception type
-  const dotColors = data.map(
-    (d) => DECEPTION_TYPE_COLORS[d.type as keyof typeof DECEPTION_TYPE_COLORS] ?? "#8b949e"
-  );
+  const avg  = data.length ? data.reduce((s, d) => s + d.score, 0) / data.length : 0;
+  const peak = data.length ? Math.max(...data.map(d => d.score)) : 0;
+  const trend = data.length > 1 ? data[data.length - 1].score - data[0].score : 0;
 
   return (
-    <div className="bg-ds-surface border border-ds-border rounded-xl p-4">
-      <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider mb-3">
-        Consistency Timeline
-      </h2>
-
-      <ResponsiveContainer width="100%" height={180}>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-          <XAxis
-            dataKey="turn"
-            tick={{ fill: "#8b949e", fontSize: 11 }}
-            label={{ value: "Turn", position: "insideBottomRight", fill: "#8b949e", fontSize: 11 }}
-          />
-          <YAxis
-            domain={[0, 1]}
-            tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
-            tick={{ fill: "#8b949e", fontSize: 11 }}
-          />
-          <Tooltip content={<CustomTooltip />} />
-
-          {/* Risk threshold lines */}
-          <ReferenceLine y={0.55} stroke="#d29922" strokeDasharray="4 2" label={{ value: "moderate", fill: "#d29922", fontSize: 10 }} />
-          <ReferenceLine y={0.75} stroke="#f85149" strokeDasharray="4 2" label={{ value: "high", fill: "#f85149", fontSize: 10 }} />
-
-          <Line
-            type="monotone"
-            dataKey="score"
-            stroke="#58a6ff"
-            strokeWidth={2}
-            dot={(props: any) => {
-              const { cx, cy, index } = props;
-              return (
-                <circle
-                  key={index}
-                  cx={cx}
-                  cy={cy}
-                  r={4}
-                  fill={dotColors[index] ?? "#58a6ff"}
-                  stroke="#0d1117"
-                  strokeWidth={1.5}
-                />
-              );
-            }}
-            activeDot={{ r: 6, stroke: "#58a6ff", strokeWidth: 2 }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-
-      {/* Summary stats */}
-      {data.length > 1 && (
-        <div className="flex gap-4 mt-3 pt-3 border-t border-ds-border text-xs text-ds-muted">
-          <span>
-            Avg:{" "}
-            <span className="text-ds-text font-mono">
-              {((data.reduce((s, d) => s + d.score, 0) / data.length) * 100).toFixed(1)}%
-            </span>
+    <div className="bg-surface border border-border rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+        <span className="text-2xs font-semibold text-ink2 uppercase tracking-widest">Timeline</span>
+        {data.length > 1 && (
+          <span className={`text-2xs font-mono ${trend > 0 ? "text-danger" : "text-success"}`}>
+            {trend > 0 ? "+" : ""}{(trend * 100).toFixed(1)}%
           </span>
-          <span>
-            Peak:{" "}
-            <span className="text-ds-red font-mono">
-              {(Math.max(...data.map((d) => d.score)) * 100).toFixed(1)}%
-            </span>
-          </span>
-          <span>
-            Trend:{" "}
-            <span
-              className={
-                data[data.length - 1].score > data[0].score
-                  ? "text-ds-red"
-                  : "text-ds-green"
-              }
-            >
-              {data[data.length - 1].score > data[0].score ? "↑ increasing" : "↓ decreasing"}
-            </span>
-          </span>
-        </div>
-      )}
+        )}
+      </div>
+
+      <div className="p-3">
+        {data.length === 0 ? (
+          <div className="h-28 flex items-center justify-center text-2xs text-ink3">
+            No data yet
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={120}>
+            <AreaChart data={data} margin={{ top: 4, right: 2, bottom: 0, left: -30 }}>
+              <defs>
+                <linearGradient id="tl-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%"   stopColor="#3b82f6" stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="2 4" stroke="#1e2730" />
+              <XAxis dataKey="turn" tick={{ fill: "#4a5568", fontSize: 9 }} />
+              <YAxis
+                domain={[0, 1]}
+                tickFormatter={v => `${(v * 100).toFixed(0)}`}
+                tick={{ fill: "#4a5568", fontSize: 9 }}
+              />
+              <Tooltip content={<Tip />} />
+              <ReferenceLine y={0.5}  stroke="#eab308" strokeDasharray="3 3" strokeOpacity={0.4} />
+              <ReferenceLine y={0.75} stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.4} />
+              <Area
+                type="monotone"
+                dataKey="score"
+                stroke="#3b82f6"
+                strokeWidth={1.5}
+                fill="url(#tl-grad)"
+                dot={(props: any) => (
+                  <circle
+                    key={props.index}
+                    cx={props.cx} cy={props.cy} r={3}
+                    fill={data[props.index]?.color ?? "#3b82f6"}
+                    stroke="#080c10"
+                    strokeWidth={1.5}
+                  />
+                )}
+                activeDot={{ r: 5, stroke: "#3b82f6", strokeWidth: 1.5, fill: "#080c10" }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+
+        {data.length > 0 && (
+          <div className="flex gap-4 mt-2 pt-2 border-t border-border text-2xs text-ink3">
+            <span>Avg <span className="font-mono text-ink2">{(avg * 100).toFixed(1)}%</span></span>
+            <span>Peak <span className="font-mono text-danger">{(peak * 100).toFixed(1)}%</span></span>
+            <span>Turns <span className="font-mono text-ink2">{data.length}</span></span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

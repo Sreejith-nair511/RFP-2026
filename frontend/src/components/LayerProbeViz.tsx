@@ -1,129 +1,85 @@
-/**
- * LayerProbeViz — bar chart showing per-layer deception probe scores for
- * open-weight models (LLaMA, Mistral, Qwen).
- *
- * Interpretability insight: the layer where the probe score peaks is where
- * the model "knows" the truth but chooses to suppress it.  This is the
- * key finding we highlight in the grant application.
- */
-
 import React from "react";
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Cell,
-  ResponsiveContainer,
-  ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  Cell, ResponsiveContainer, ReferenceLine,
 } from "recharts";
+import { scoreToColor } from "../types";
 
-interface LayerScore {
-  layer: number;
-  score: number;
-  label?: string;
-}
+interface LayerScore { layer: number; score: number; label?: string; }
+interface Props { layerScores: LayerScore[]; modelName?: string; }
 
-interface Props {
-  layerScores: LayerScore[];
-  modelName?: string;
-}
+const MOCK: LayerScore[] = Array.from({ length: 32 }, (_, i) => {
+  const x = i / 31;
+  const base = 0.08 + 0.62 * Math.exp(-((x - 0.55) ** 2) / 0.04);
+  return {
+    layer: i,
+    score: Math.min(1, base + Math.sin(i * 1.3) * 0.05),
+    label: i === 17 ? "Peak" : undefined,
+  };
+});
 
-function scoreToColor(score: number): string {
-  if (score < 0.3) return "#3fb950";
-  if (score < 0.55) return "#d29922";
-  if (score < 0.75) return "#f0883e";
-  return "#f85149";
-}
-
-const CustomTooltip: React.FC<any> = ({ active, payload }) => {
+const Tip: React.FC<any> = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const d: LayerScore = payload[0].payload;
   return (
-    <div className="bg-ds-bg border border-ds-border rounded-lg px-3 py-2 text-xs shadow-lg">
-      <p className="text-ds-muted">Layer {d.layer}</p>
-      <p className="font-mono font-bold" style={{ color: scoreToColor(d.score) }}>
-        {(d.score * 100).toFixed(1)}% deceptive
+    <div className="bg-bg border border-border rounded-md px-2.5 py-1.5 text-2xs shadow-panel">
+      <p className="text-ink3">Layer {d.layer}</p>
+      <p className="font-mono font-semibold" style={{ color: scoreToColor(d.score) }}>
+        {(d.score * 100).toFixed(1)}%
       </p>
-      {d.label && <p className="text-ds-muted/70 mt-0.5">{d.label}</p>}
+      {d.label && <p className="text-violet">{d.label}</p>}
     </div>
   );
 };
 
-// Mock data for when no real data is available (demo mode)
-const MOCK_LAYER_SCORES: LayerScore[] = Array.from({ length: 32 }, (_, i) => {
-  // Simulate a realistic pattern: deception signal peaks in middle layers
-  const x = i / 31;
-  const base = 0.1 + 0.6 * Math.exp(-((x - 0.55) ** 2) / 0.04);
-  return {
-    layer: i,
-    score: Math.min(1, base + (Math.random() - 0.5) * 0.08),
-    label: i === 17 ? "Peak: model 'knows' truth here" : undefined,
-  };
-});
-
-export const LayerProbeViz: React.FC<Props> = ({
-  layerScores,
-  modelName = "Open-weight model",
-}) => {
-  const data = layerScores.length > 0 ? layerScores : MOCK_LAYER_SCORES;
-  const peakLayer = data.reduce((best, d) => (d.score > best.score ? d : best), data[0]);
+export const LayerProbeViz: React.FC<Props> = ({ layerScores, modelName }) => {
+  const data = layerScores.length > 0 ? layerScores : MOCK;
+  const peak = data.reduce((b, d) => d.score > b.score ? d : b, data[0]);
+  const isDemo = layerScores.length === 0;
 
   return (
-    <div className="bg-ds-surface border border-ds-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-ds-text uppercase tracking-wider">
-          Layer Probe Scores
-        </h2>
-        <span className="text-xs text-ds-muted">{modelName}</span>
+    <div className="bg-surface border border-border rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+        <span className="text-2xs font-semibold text-ink2 uppercase tracking-widest">Layer Probes</span>
+        <div className="flex items-center gap-2">
+          {isDemo && (
+            <span className="text-2xs text-warn border border-warn/30 rounded px-1.5 py-px">
+              demo
+            </span>
+          )}
+          {modelName && (
+            <span className="text-2xs text-ink3 truncate max-w-[90px]">{modelName}</span>
+          )}
+        </div>
       </div>
 
-      {layerScores.length === 0 && (
-        <p className="text-xs text-ds-yellow mb-2">
-          ⚠ Demo data — connect an open-weight model for real activations.
-        </p>
-      )}
+      <div className="p-3">
+        <ResponsiveContainer width="100%" height={130}>
+          <BarChart data={data} margin={{ top: 4, right: 2, bottom: 0, left: -28 }}>
+            <CartesianGrid strokeDasharray="2 4" stroke="#1e2730" vertical={false} />
+            <XAxis dataKey="layer" tick={{ fill: "#4a5568", fontSize: 8 }} interval={7} />
+            <YAxis
+              domain={[0, 1]}
+              tickFormatter={v => `${(v * 100).toFixed(0)}`}
+              tick={{ fill: "#4a5568", fontSize: 8 }}
+            />
+            <Tooltip content={<Tip />} />
+            <ReferenceLine
+              x={peak.layer}
+              stroke="#a855f7"
+              strokeDasharray="3 3"
+              label={{ value: `L${peak.layer}`, fill: "#a855f7", fontSize: 8 }}
+            />
+            <Bar dataKey="score" radius={[1, 1, 0, 0]}>
+              {data.map((d, i) => <Cell key={i} fill={scoreToColor(d.score)} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
 
-      <ResponsiveContainer width="100%" height={180}>
-        <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
-          <XAxis
-            dataKey="layer"
-            tick={{ fill: "#8b949e", fontSize: 10 }}
-            interval={3}
-            label={{ value: "Layer", position: "insideBottomRight", fill: "#8b949e", fontSize: 11 }}
-          />
-          <YAxis
-            domain={[0, 1]}
-            tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
-            tick={{ fill: "#8b949e", fontSize: 10 }}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <ReferenceLine
-            x={peakLayer.layer}
-            stroke="#bc8cff"
-            strokeDasharray="4 2"
-            label={{ value: `peak L${peakLayer.layer}`, fill: "#bc8cff", fontSize: 10 }}
-          />
-          <Bar dataKey="score" radius={[2, 2, 0, 0]}>
-            {data.map((entry, index) => (
-              <Cell key={index} fill={scoreToColor(entry.score)} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-
-      {/* Interpretability annotation */}
-      <div className="mt-3 pt-3 border-t border-ds-border text-xs text-ds-muted space-y-1">
-        <p>
-          <span className="text-ds-purple font-semibold">Peak layer {peakLayer.layer}</span>
-          {" "}— this is where the model's internal representation most strongly encodes
-          deceptive intent. RepE steering vectors are extracted here.
-        </p>
-        <p className="text-ds-muted/60">
-          Score = linear probe accuracy on honest vs. deceptive hidden states (TruthfulQA).
+        <p className="text-2xs text-ink3 mt-2 pt-2 border-t border-border leading-relaxed">
+          <span className="text-violet font-medium">Peak layer {peak.layer}</span>
+          {" "}— where the model's residual stream most strongly encodes deceptive intent.
+          RepE steering vectors are extracted at this layer.
         </p>
       </div>
     </div>
