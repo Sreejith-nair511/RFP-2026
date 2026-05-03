@@ -1,17 +1,22 @@
-/**
- * useDeceptiScope — manages communication with the DeceptiScope backend.
- *
- * Strategy: REST-first (POST /api/chat) with WebSocket upgrade when available.
- * REST works immediately without a persistent connection — no 400 path issues.
- * "Connect" just validates the model selection and marks status as ready.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatMessage, DeceptionResult, ModelProvider } from "../types";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+
+export interface SessionRecord {
+  id: string;
+  timestamp: number;
+  prompt: string;
+  response: string;
+  deception_score: number;
+  deception_type: string;
+  confidence: number;
+  explanation: string;
+  model: string;
+  provider: string;
+}
 
 interface UseWebSocketReturn {
   status: ConnectionStatus;
@@ -21,33 +26,40 @@ interface UseWebSocketReturn {
   connect: (provider: ModelProvider, model: string) => void;
   disconnect: () => void;
   isTyping: boolean;
+  sessionId: string | null;
+  sessionRecords: SessionRecord[];
+  exportSession: (fmt: "json" | "csv") => Promise<void>;
+  clearSession: () => void;
 }
 
 export function useWebSocket(): UseWebSocketReturn {
-  const [status, setStatus]   = useState<ConnectionStatus>("disconnected");
+  const [status, setStatus]     = useState<ConnectionStatus>("disconnected");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId]         = useState<string | null>(null);
+  const [sessionRecords, setSessionRecords] = useState<SessionRecord[]>([]);
+
   const providerRef = useRef<string>("groq");
-  const modelRef    = useRef<string>("llama-3.1-8b-instant");
+  const modelRef    = useRef<string>("llama-3.3-70b-versatile");
   const abortRef    = useRef<AbortController | null>(null);
 
-  // "Connect" = validate backend reachability + store provider/model
+  // Create a session on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/sessions`, { method: "POST" })
+      .then(r => r.json())
+      .then(d => setSessionId(d.session_id))
+      .catch(() => {}); // silent — session is optional
+  }, []);
+
   const connect = useCallback(async (provider: ModelProvider, model: string) => {
     providerRef.current = provider;
     modelRef.current    = model;
     setStatus("connecting");
-
     try {
       const res = await fetch(`${API_BASE}/`, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) {
-        setStatus("connected");
-      } else {
-        setStatus("error");
-      }
+      setStatus(res.ok ? "connected" : "error");
     } catch {
-      // Backend not reachable — still mark connected so user can try
-      // (REST call will show the real error)
-      setStatus("connected");
+      setStatus("connected"); // optimistic — REST call will surface real errors
     }
   }, []);
 
@@ -59,17 +71,13 @@ export function useWebSocket(): UseWebSocketReturn {
   const sendMessage = useCallback((text: string, enableSteering: boolean) => {
     if (!text.trim()) return;
 
-    // Add user message immediately
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-      timestamp: Date.now(),
+      id: crypto.randomUUID(), role: "user",
+      content: text, timestamp: Date.now(),
     };
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    // Cancel any in-flight request
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -83,20 +91,20 @@ export function useWebSocket(): UseWebSocketReturn {
         provider:        providerRef.current,
         model:           modelRef.current,
         enable_steering: enableSteering,
+        session_id:      sessionId,
       }),
     })
       .then(r => {
-        if (!r.ok) return r.text().then(t => { throw new Error(`HTTP ${r.status}: ${t}`); });
+        if (!r.ok) return r.json().then(d => { throw new Error(d.detail || `HTTP ${r.status}`); });
         return r.json();
       })
       .then(data => {
         setIsTyping(false);
 
         if (data.detail || data.error) {
-          const errText = data.detail || data.error;
           setMessages(prev => [...prev, {
             id: crypto.randomUUID(), role: "assistant",
-            content: `⚠ ${errText}`, timestamp: Date.now(),
+            content: `Error: ${data.detail || data.error}`, timestamp: Date.now(),
           }]);
           return;
         }
@@ -112,6 +120,7 @@ export function useWebSocket(): UseWebSocketReturn {
           signal_contributions: data.signal_contributions ?? {},
           raw_signals:          {},
           behavioral_signals:   data.behavioral_signals ?? {},
+          deception_breakdown:  data.deception_breakdown ?? [],
         };
 
         setMessages(prev => [...prev, {
@@ -121,21 +130,58 @@ export function useWebSocket(): UseWebSocketReturn {
           deception,
           tokens: data.response?.split(" ") ?? [],
         }]);
+
+        // Refresh session records
+        if (sessionId) {
+          fetch(`${API_BASE}/api/sessions/${sessionId}`)
+            .then(r => r.json())
+            .then(d => setSessionRecords(d.records ?? []))
+            .catch(() => {});
+        }
       })
       .catch(err => {
         if (err.name === "AbortError") return;
         setIsTyping(false);
         setMessages(prev => [...prev, {
           id: crypto.randomUUID(), role: "assistant",
-          content: `⚠ ${err.message}`,
+          content: `Error: ${err.message}`,
           timestamp: Date.now(),
         }]);
       });
-  }, []);
+  }, [sessionId]);
 
   const clearMessages = useCallback(() => setMessages([]), []);
 
+  const exportSession = useCallback(async (fmt: "json" | "csv") => {
+    if (!sessionId) return;
+    const url = `${API_BASE}/api/sessions/${sessionId}/export?fmt=${fmt}`;
+    const r = await fetch(url);
+    const blob = await r.blob();
+    const a = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(blob),
+      download: `deceptiscope-session-${sessionId.slice(0, 8)}.${fmt}`,
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, [sessionId]);
+
+  const clearSession = useCallback(() => {
+    if (sessionId) {
+      fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" }).catch(() => {});
+    }
+    // Create a new session
+    fetch(`${API_BASE}/api/sessions`, { method: "POST" })
+      .then(r => r.json())
+      .then(d => { setSessionId(d.session_id); setSessionRecords([]); })
+      .catch(() => {});
+    setMessages([]);
+  }, [sessionId]);
+
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { status, messages, sendMessage, clearMessages, connect, disconnect, isTyping };
+  return {
+    status, messages, sendMessage, clearMessages,
+    connect, disconnect, isTyping,
+    sessionId, sessionRecords, exportSession, clearSession,
+  };
 }

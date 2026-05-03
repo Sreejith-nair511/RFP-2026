@@ -5,6 +5,14 @@ export type DeceptionType =
 
 export interface TokenRisk { index: number; token: string; risk_score: number; }
 
+export interface DeceptionBreakdownItem {
+  type: string;
+  label: string;
+  score: number;
+  description: string;
+  severity: "low" | "moderate" | "high";
+}
+
 export interface DeceptionResult {
   score: number;
   deception_type: DeceptionType;
@@ -15,7 +23,8 @@ export interface DeceptionResult {
   type_scores: Record<string, number>;
   signal_contributions: Record<string, number>;
   raw_signals: Record<string, unknown>;
-  behavioral_signals?: { entropy?: number; consistency?: number; cot_contradiction?: number };
+  behavioral_signals?: { entropy?: number; consistency?: number; cot_contradiction?: number; confidence_mismatch?: number; sycophancy_score?: number; omission_score?: number };
+  deception_breakdown?: DeceptionBreakdownItem[];
 }
 
 export interface ChatMessage {
@@ -37,6 +46,8 @@ export interface ModelOption {
   supportsCoT: boolean;
   speed: "fast" | "medium" | "slow";
   tokensPerSec: string;
+  unavailable?: boolean;   // true = show in list but disabled with reason
+  unavailableReason?: string;
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
@@ -45,8 +56,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { provider: "groq",     model: "meta-llama/llama-4-scout-17b-16e-instruct", label: "LLaMA 4 Scout", supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "750" },
   { provider: "groq",     model: "qwen/qwen3-32b",                         label: "Qwen3 32B",        supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "400" },
   { provider: "groq",     model: "openai/gpt-oss-20b",                     label: "GPT OSS 20B",      supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "1000" },
-  { provider: "gemini",   model: "gemini-2.5-flash",                       label: "Gemini 2.5 Flash", supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "—" },
-  { provider: "gemini",   model: "gemini-2.5-pro",                         label: "Gemini 2.5 Pro",   supportsLogprobs: false, supportsCoT: false, speed: "medium", tokensPerSec: "—" },
+  { provider: "gemini",   model: "gemini-2.5-flash",                       label: "Gemini 2.5 Flash", supportsLogprobs: false, supportsCoT: false, speed: "fast",   tokensPerSec: "—", unavailable: true, unavailableReason: "API key needs project access — enable Gemini API at console.cloud.google.com" },
+  { provider: "gemini",   model: "gemini-2.5-pro",                         label: "Gemini 2.5 Pro",   supportsLogprobs: false, supportsCoT: false, speed: "medium", tokensPerSec: "—", unavailable: true, unavailableReason: "API key needs project access — enable Gemini API at console.cloud.google.com" },
   { provider: "openai",   model: "gpt-4o",                                 label: "GPT-4o",           supportsLogprobs: true,  supportsCoT: false, speed: "medium", tokensPerSec: "—" },
   { provider: "anthropic",model: "claude-3-sonnet-4.6",                    label: "Claude Sonnet 4.6",supportsLogprobs: false, supportsCoT: true,  speed: "medium", tokensPerSec: "—" },
 ];
